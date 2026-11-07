@@ -1,3 +1,4 @@
+import { versionInfo } from '../version.mjs';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -70,7 +71,7 @@ export function createApplication({ dataDir, trustProxy = false, fetchImpl = fet
     send(res, projectReadingData(payload.data, url.pathname));
   }
   async function handle(req, res, url) {
-    if (url.pathname === '/healthz') { send(res, { status: 'ok', initialized: store.initialized() }); return true; }
+    if (url.pathname === '/healthz') { send(res, { status: 'ok', version: versionInfo.version, studioVersion: versionInfo.studioVersion, initialized: store.initialized() }); return true; }
     if (!url.pathname.startsWith('/api/') && url.pathname !== '/api') return false;
     try {
       const user = session(req);

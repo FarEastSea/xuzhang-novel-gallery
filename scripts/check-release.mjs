@@ -2,6 +2,7 @@ import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+execFileSync(process.execPath, ['scripts/version.mjs', 'check'], { stdio: 'inherit' });
 const root = process.cwd();
 const snapshot = JSON.parse(await readFile(path.join(root, 'src/data/snapshot.json'), 'utf8'));
 assert.equal(snapshot.works.length, 0, 'Source snapshot must not contain private works');

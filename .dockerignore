@@ -1,5 +1,7 @@
 # Allowlist the build context: runtime data and credentials cannot enter an image.
 **
+!VERSION
+!version.mjs
 !package.json
 !package-lock.json
 !tsconfig.json
@@ -12,6 +14,8 @@
 !server.mjs
 !server/
 !server/**
+!scripts/
+!scripts/version.mjs
 !tests/
 !tests/**
 !Dockerfile

@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { once } from 'node:events';
 import { createApplication } from '../server/application.mjs';
+import { versionInfo } from '../version.mjs';
 import { defaults } from '../server/store.mjs';
 
 async function fixture(t, options = {}) {
@@ -132,4 +133,12 @@ test('proxy HTTPS enables secure cookies only when explicitly trusted', async t 
   const token = (await readFile(path.join(f.dir, 'setup-token'), 'utf8')).trim();
   const result = await f.call('/api/setup', { method: 'POST', headers: { 'X-Forwarded-Proto': 'https', Origin: '' }, body: { token, username: 'owner', password: 'owner-password-123' } });
   assert.match(result.headers.get('set-cookie'), /; Secure/);
+});
+
+test('health endpoint reports the exact aligned application and Studio versions', async t => {
+  const f = await fixture(t);
+  const health = await f.call('/healthz');
+  assert.equal(health.status, 200);
+  assert.equal(health.data.version, versionInfo.version);
+  assert.equal(health.data.studioVersion, versionInfo.studioVersion);
 });
