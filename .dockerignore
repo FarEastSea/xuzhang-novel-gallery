@@ -1,0 +1,17 @@
+# Allowlist the build context: runtime data and credentials cannot enter an image.
+**
+!package.json
+!package-lock.json
+!tsconfig.json
+!vite.config.ts
+!index.html
+!src/
+!src/**
+!public/
+!public/**
+!server.mjs
+!server/
+!server/**
+!tests/
+!tests/**
+!Dockerfile
