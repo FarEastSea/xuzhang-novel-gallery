@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { LogOut, ArrowLeft, RefreshCw } from 'lucide-react';
+import { PublicationManager } from './PublicationManager';
 import { request, useSession, type User } from '../session';
 import { useDocumentTitle } from '../hooks';
 
@@ -29,7 +30,7 @@ export function LoginPage() {
     try { await request(needsSetup ? '/api/setup' : '/api/login', 'POST', Object.fromEntries(form)); await refresh(); navigate(needsSetup ? '/admin' : '/account'); }
     catch (error) { setError(errorText(error)); } finally { setBusy(false); }
   }
-  return <Frame title={needsSetup ? '启用你的作品馆' : '欢迎回来'} copy={needsSetup ? '创建首位管理员，之后在管理中心配置联动与用户。' : '登录后使用已授权的创作台入口；游客可以直接阅读。'}>
+  return <Frame title={needsSetup ? '启用你的作品馆' : '欢迎回来'} copy={needsSetup ? '创建首位管理员，之后在管理中心配置联动与用户。' : '登录后阅读管理员为你开放的上架作品。'}>
     <form className="manage-form manage-form--narrow" onSubmit={submit}>
       {needsSetup && <label>初始化密钥<input name="token" autoComplete="off" type="password" required /><small>从服务数据目录的 setup-token 文件读取；初始化成功后自动失效。</small></label>}
       <label>用户名<input name="username" autoComplete="username" pattern="[A-Za-z0-9_\-]{3,32}" minLength={3} maxLength={32} required /><small>3–32 位字母、数字、下划线或短横线，不区分大小写</small></label>
@@ -47,7 +48,7 @@ export function AccountPage() {
   const navigate = useNavigate();
   if (loading) return <Frame title="账户设置" copy="正在读取账户…">{null}</Frame>;
   if (!user) return <Navigate to="/login" replace />;
-  async function logout() { setBusy(true); try { await request('/api/logout', 'POST', {}); await refresh(); navigate('/'); } catch (error) { setError(errorText(error)); } finally { setBusy(false); } }
+  async function logout() { setBusy(true); try { await request('/api/logout', 'POST', {}); navigate('/'); await refresh(); } catch (error) { setError(errorText(error)); } finally { setBusy(false); } }
   async function changePassword(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); const form = new FormData(event.currentTarget);
     if (form.get('password') !== form.get('confirmPassword')) { setError('两次输入的新密码不一致'); return; }
@@ -63,12 +64,12 @@ export function AccountPage() {
   </Frame>;
 }
 function UserEditor({ user, self, onSaved }: { user: User; self: boolean; onSaved: () => Promise<void> }) {
-  const [role, setRole] = useState(user.role); const [enabled, setEnabled] = useState(user.enabled);
+  const [role, setRole] = useState(user.role); const [studioAccess, setStudioAccess] = useState(user.studioAccess); const [enabled, setEnabled] = useState(user.enabled);
   const [password, setPassword] = useState(''); const [busy, setBusy] = useState(false); const [error, setError] = useState(''); const [message, setMessage] = useState('');
-  useEffect(() => { setRole(user.role); setEnabled(user.enabled); }, [user]);
+  useEffect(() => { setRole(user.role); setEnabled(user.enabled); setStudioAccess(user.studioAccess); }, [user]);
   async function save(event: FormEvent) {
     event.preventDefault(); setBusy(true); setError(''); setMessage('');
-    try { await request(`/api/admin/users/${user.id}`, 'PATCH', { role, enabled, ...(password ? { password } : {}) }); setPassword(''); await onSaved(); setMessage('用户已更新，原会话已失效'); }
+    try { await request(`/api/admin/users/${user.id}`, 'PATCH', { role, enabled, studioAccess, ...(password ? { password } : {}) }); setPassword(''); await onSaved(); setMessage('用户已更新，原会话已失效'); }
     catch (error) { setError(errorText(error)); } finally { setBusy(false); }
   }
   async function remove() {
@@ -76,15 +77,15 @@ function UserEditor({ user, self, onSaved }: { user: User; self: boolean; onSave
     setBusy(true); setError('');
     try { await request(`/api/admin/users/${user.id}`, 'DELETE'); await onSaved(); } catch (error) { setError(errorText(error)); } finally { setBusy(false); }
   }
-  return <form className="user-editor" onSubmit={save}><div className="user-identity"><h3>{user.username}{self && '（当前账户）'}</h3><small>{new Date(user.createdAt).toLocaleDateString('zh-CN')}</small></div>
-    <label>角色<select value={role} onChange={e => setRole(e.target.value as User['role'])} disabled={self || busy}><option value="member">成员</option><option value="admin">管理员</option></select></label>
+  return <form className="user-editor" onSubmit={save}><div className="user-identity"><h3>{user.username}{self && '（当前账户）'}</h3><small>{new Date(user.createdAt).toLocaleDateString('zh-CN')}</small>{!self && <label className="check-field user-studio-access"><input type="checkbox" checked={role === 'admin' || studioAccess} onChange={e => setStudioAccess(e.target.checked)} disabled={busy || role === 'admin'} />允许进入创作台</label>}</div>
+    <label>角色<select value={role} onChange={e => { setRole(e.target.value as User['role']); setStudioAccess(false); }} disabled={self || busy}><option value="member">成员</option><option value="admin">管理员</option></select></label>
     <label className="check-field"><input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)} disabled={self || busy} />启用</label>
     {!self && <><label>重置密码<input type="password" value={password} minLength={12} maxLength={128} autoComplete="new-password" placeholder="留空保留原密码" onChange={e => setPassword(e.target.value)} disabled={busy} /></label><div className="manage-actions"><button className="button button--ghost" disabled={busy}>保存</button><button type="button" className="button button--ghost danger-action" disabled={busy} onClick={remove}>删除</button></div></>}
     <div className="user-feedback"><Notice error={error} message={message} /></div></form>;
 }
 export function AdminPage() {
   const { user, loading, refresh } = useSession();
-  const [tab, setTab] = useState<'settings' | 'users'>('settings');
+  const [tab, setTab] = useState<'publications' | 'settings' | 'users'>('publications');
   const [settings, setSettings] = useState<Settings | null>(null); const [users, setUsers] = useState<User[]>([]);
   const [error, setError] = useState(''); const [message, setMessage] = useState(''); const [busy, setBusy] = useState(false);
   const loadUsers = async () => { setUsers(await request<User[]>('/api/admin/users')); };
@@ -92,7 +93,7 @@ export function AdminPage() {
   useEffect(() => { if (user?.role === 'admin') void load(); }, [user?.id]);
   if (loading) return <Frame title="管理中心" copy="正在确认权限…">{null}</Frame>;
   if (!user) return <Navigate to="/login" replace />;
-  if (user.role !== 'admin') return <Frame title="没有管理权限" copy="当前账户可以阅读作品和使用已授权的创作台入口。"><Link className="button button--ghost" to="/account">返回账户设置</Link></Frame>;
+  if (user.role !== 'admin') return <Frame title="没有管理权限" copy="当前账户可以阅读管理员上架并授权的作品。"><Link className="button button--ghost" to="/account">返回账户设置</Link></Frame>;
   async function saveSettings(event: FormEvent) {
     event.preventDefault(); setBusy(true); setError(''); setMessage('');
     try { setSettings(await request<Settings>('/api/admin/settings', 'PUT', settings)); await refresh(); setMessage('配置已保存并生效。作品列表刷新后使用新来源。'); }
@@ -105,23 +106,24 @@ export function AdminPage() {
   }
   async function addUser(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); const form = event.currentTarget; setBusy(true); setError(''); setMessage('');
-    try { await request('/api/admin/users', 'POST', Object.fromEntries(new FormData(form))); form.reset(); await loadUsers(); setMessage('用户已创建'); }
+    try { await request('/api/admin/users', 'POST', { ...Object.fromEntries(new FormData(form)), studioAccess: new FormData(form).get('studioAccess') === 'on' }); form.reset(); await loadUsers(); setMessage('用户已创建'); }
     catch (error) { setError(errorText(error)); } finally { setBusy(false); }
   }
   return <Frame title="管理中心" copy="统一管理作品来源、访问权限与账户。">
-    <nav className="manage-tabs" aria-label="管理栏目"><button className={tab === 'settings' ? 'is-active' : ''} onClick={() => { setTab('settings'); setError(''); setMessage(''); }} aria-pressed={tab === 'settings'}>站点配置</button><button className={tab === 'users' ? 'is-active' : ''} onClick={() => { setTab('users'); setError(''); setMessage(''); }} aria-pressed={tab === 'users'}>用户管理</button><Link to="/account">我的账户</Link></nav>
+    <nav className="manage-tabs" aria-label="管理栏目"><button className={tab === 'publications' ? 'is-active' : ''} onClick={() => { setTab('publications'); setError(''); setMessage(''); }} aria-pressed={tab === 'publications'}>作品上架</button><button className={tab === 'settings' ? 'is-active' : ''} onClick={() => { setTab('settings'); setError(''); setMessage(''); }} aria-pressed={tab === 'settings'}>站点配置</button><button className={tab === 'users' ? 'is-active' : ''} onClick={() => { setTab('users'); setError(''); setMessage(''); }} aria-pressed={tab === 'users'}>用户管理</button><Link to="/account">我的账户</Link></nav>
     <Notice error={error} message={message} />
     {!settings && <button className="button button--ghost" onClick={() => void load()}>重新读取</button>}
-    {tab === 'settings' && settings && <section className="manage-section"><h2>创作台联动</h2><p>服务连接地址供作品馆服务器读取；入口地址供已登录成员在浏览器中打开。游客不会获得创作台入口。</p>
+    {tab === 'publications' && <PublicationManager users={users} />}
+    {tab === 'settings' && settings && <section className="manage-section"><h2>创作台联动</h2><p>服务连接地址供作品馆服务器读取；入口地址供获得创作台权限的账户打开。普通阅读权限不会授予创作台权限。</p>
       <form className="manage-form" onSubmit={saveSettings}>
         <label>服务连接地址<input type="url" value={settings.studioOrigin} placeholder="http://studio:28080" onChange={e => setSettings({ ...settings, studioOrigin: e.target.value })} /><small>填入服务器可访问的 HTTP / HTTPS 源地址。留空时关闭实时联动。</small></label>
         <label>成员访问入口<input type="url" value={settings.studioPublicUrl} placeholder="https://studio.example.com" onChange={e => setSettings({ ...settings, studioPublicUrl: e.target.value })} /><small>填入成员浏览器可访问的地址。留空时隐藏所有创作台入口。创作台自身的登录权限由创作台管理。</small></label>
         <div className="form-columns"><label>会话有效期（小时）<input type="number" min={1} max={168} required value={settings.sessionHours} onChange={e => setSettings({ ...settings, sessionHours: Number(e.target.value) })} /><small>缩短时会同时限制现有会话的剩余时长。</small></label><label>连接超时（秒）<input type="number" min={2} max={30} required value={settings.timeoutSeconds} onChange={e => setSettings({ ...settings, timeoutSeconds: Number(e.target.value) })} /></label></div>
         <label className="check-field"><input type="checkbox" checked={settings.snapshotEnabled} onChange={e => setSettings({ ...settings, snapshotEnabled: e.target.checked })} />启用离线快照阅读</label>
-        <p className="form-help">启用后，数据目录中的快照内容也可供游客阅读。</p>
+        <p className="form-help">离线快照同样遵循作品上架状态和可见范围。</p>
         <div className="manage-actions"><button className="button button--solid" disabled={busy}>{busy ? '正在处理…' : '保存配置'}</button><button type="button" className="button button--ghost" disabled={busy} onClick={testConnection}><RefreshCw size={15} />检测已保存的连接</button></div>
       </form></section>}
-    {tab === 'users' && <><section className="manage-section"><h2>访问权限</h2><p>游客：浏览作品与阅读章节。成员：额外获得创作台入口。管理员：额外管理配置和用户。账户由管理员创建。</p><div className="user-list">{users.map(item => <UserEditor key={item.id} user={item} self={item.id === user.id} onSaved={loadUsers} />)}</div></section>
-      <section className="manage-section"><h2>创建用户</h2><form className="manage-form manage-form--narrow" onSubmit={addUser}><label>用户名<input name="username" pattern="[A-Za-z0-9_\-]{3,32}" minLength={3} maxLength={32} required autoComplete="off" /></label><PasswordField label="初始密码" /><label>角色<select name="role" defaultValue="member"><option value="member">成员</option><option value="admin">管理员</option></select></label><button className="button button--solid" disabled={busy}>{busy ? '正在创建…' : '创建用户'}</button></form></section></>}
+    {tab === 'users' && <><section className="manage-section"><h2>访问权限</h2><p>游客和普通用户按作品可见范围阅读。创作台入口需要单独授权；管理员管理上架、权限与账户。</p><div className="user-list">{users.map(item => <UserEditor key={item.id} user={item} self={item.id === user.id} onSaved={loadUsers} />)}</div></section>
+      <section className="manage-section"><h2>创建用户</h2><form className="manage-form manage-form--narrow" onSubmit={addUser}><label>用户名<input name="username" pattern="[A-Za-z0-9_\-]{3,32}" minLength={3} maxLength={32} required autoComplete="off" /></label><PasswordField label="初始密码" /><label>角色<select name="role" defaultValue="member"><option value="member">成员</option><option value="admin">管理员</option></select></label><label className="check-field"><input type="checkbox" name="studioAccess" />允许进入创作台（独立授权）</label><button className="button button--solid" disabled={busy}>{busy ? '正在创建…' : '创建用户'}</button></form></section></>}
   </Frame>;
 }

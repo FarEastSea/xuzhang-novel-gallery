@@ -317,7 +317,7 @@ export function HomePage() {
               <div className="works-empty">
                 <Sparkles size={24} strokeWidth={1.2} />
                 <h3>还没有匹配的故事</h3>
-                <p>换一个关键词，或者去创作台开启一个新的世界。</p>
+                <p>当前没有可阅读的上架作品，或没有符合筛选条件的作品。</p>
                 <button
                   type="button"
                   className="text-link"
@@ -334,7 +334,7 @@ export function HomePage() {
             <div className="works-footnote">
               <p>
                 <span>NOTE</span>
-                作品按最近更新时间排序。标记「构思中」的作品仍在创作台内打磨，章节生成后将自动出现在这里。
+                作品按最近更新时间排序，仅展示管理员已上架且对当前账户可见的作品。
               </p>
               <span>{String(works.length).padStart(2, "0")} WORKS IN PROGRESS</span>
             </div>
@@ -438,7 +438,7 @@ export function HomePage() {
               <em>等你开场。</em>
             </h2>
             <p className="closing__copy">
-              去 Biz Novel Studio 写下一个世界。等它长出第一章，这里会自动为它留一盏灯。
+              在 Biz Novel Studio 写下一个世界，由管理员决定何时上架、向谁开放。
             </p>
             <div className="closing__actions">
               <StudioLink className="button button--solid" href={BNS_STUDIO_URL} target="_blank" rel="noreferrer">

@@ -112,7 +112,7 @@ export function AboutPage() {
                   </h2>
                   <p>
                     {online === false
-                      ? "创作台暂时不可达，页面会展示最近一次同步的作品数据。"
+                      ? "创作台暂时不可达，页面会展示符合当前阅读权限的离线作品数据。"
                       : "作品馆正在从创作台读取最新的作品、章节与创作进度。"}
                   </p>
                 </div>
@@ -238,13 +238,13 @@ export function AboutPage() {
               index="02"
               kicker="ADD A STORY / 新增作品"
               title="在创作台写，在这里被看见"
-              copy="作品不需要手动上架、导出或复制。只要它存在于 Biz Novel Studio，作品馆就能读到它。"
+              copy="新作品默认不上架。管理员选择作品上架并设置可见范围后，获准的读者才能在作品馆中看到它。"
             />
             <ol className="publish-steps">
               {[
                 ["01", "在创作台建立作品", "创建小说项目，补全世界观、人物与分卷，让故事拥有完整的骨架。"],
                 ["02", "推进章节生成", "在创作台中生成正文。已完成的章节会自动变为可阅读状态。"],
-                ["03", "刷新作品馆", "重新打开或刷新叙章，新的作品、章节与元数据会从接口同步过来。"],
+                ["03", "设置上架与范围", "管理员在作品上架中选择作品，设置所有人、登录用户、指定用户或仅管理员可见。"] ,
                 ["04", "分享给读者", "把作品链接发给读者。封面、简介、目录和阅读页都已准备好。"],
               ].map(([index, title, copy], i) => (
                 <Reveal as="li" key={index} delay={i * 70}>
@@ -254,7 +254,7 @@ export function AboutPage() {
                 </Reveal>
               ))}
             </ol>
-            <div className="about-config"><div><h3>配置统一在管理中心完成</h3><p>管理员登录后可设置作品来源、创作台入口与离线阅读。保存后立即生效。游客可以浏览作品和阅读章节。</p></div><div><Link className="button button--ghost" to="/account">账户与权限 <ArrowRight size={15} /></Link></div></div>
+            <div className="about-config"><div><h3>配置统一在管理中心完成</h3><p>管理员登录后可设置作品来源、创作台入口与离线阅读。保存后立即生效。游客只能浏览面向所有人开放的上架作品。</p></div><div><Link className="button button--ghost" to="/account">账户与权限 <ArrowRight size={15} /></Link></div></div>
           </div>
         </section>
 

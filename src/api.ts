@@ -1,5 +1,5 @@
 import { API_BASE } from "./config";
-import { snapshot, loadSnapshot } from "./data";
+import { loadSnapshot } from "./data";
 import type {
   Axiom,
   BookContract,
@@ -14,6 +14,7 @@ import type {
   NovelSummary,
   Volume,
   WorksPayload,
+  Snapshot,
 } from "./types";
 import { coverKeyFor, isChapterReadable } from "./utils";
 
@@ -25,9 +26,8 @@ interface ApiEnvelope<T> {
   message?: string;
 }
 
-const CACHE_TTL = 30_000;
-let worksCache: { value: WorksPayload; at: number } | null = null;
-const novelCache = new Map<string, { value: NovelPayload; at: number }>();
+class ApiReadError extends Error { constructor(public status: number) { super('Reading request failed'); } }
+const isDenied = (error: unknown) => error instanceof ApiReadError && [401, 403, 404, 409].includes(error.status);
 
 function asText(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
@@ -62,10 +62,11 @@ async function apiGet<T>(path: string, timeout = 14_000): Promise<T> {
     const response = await fetch(`${API_BASE}${path}`, {
       signal: controller.signal,
       headers: { Accept: "application/json" },
-      credentials: "include",
+      credentials: "same-origin",
+      cache: "no-store",
     });
     if (!response.ok) {
-      throw new Error(`Biz Novel Studio API ${response.status}`);
+      throw new ApiReadError(response.status);
     }
     const payload = (await response.json()) as ApiEnvelope<T>;
     if (payload.success === false) {
@@ -85,7 +86,7 @@ function normalizeGenre(raw: JsonRecord | null | undefined): Genre {
   };
 }
 
-function fallbackFor(id: string): NovelDetail | undefined {
+function fallbackFor(id: string, snapshot: Snapshot): NovelDetail | undefined {
   return snapshot.works.find((work) => work.id === id);
 }
 
@@ -395,7 +396,7 @@ function normalizeDetail(
   };
 }
 
-function snapshotWorksPayload(): WorksPayload {
+function snapshotWorksPayload(snapshot: Snapshot): WorksPayload {
   return {
     works: [...snapshot.works].sort(
       (a, b) =>
@@ -406,76 +407,30 @@ function snapshotWorksPayload(): WorksPayload {
   };
 }
 
-export async function loadWorks(force = false): Promise<WorksPayload> {
-  await loadSnapshot(force);
-  if (!force && worksCache && Date.now() - worksCache.at < CACHE_TTL) {
-    return worksCache.value;
-  }
+export async function loadWorks(_force = false): Promise<WorksPayload> {
   try {
-    const data = await apiGet<{ items?: JsonRecord[] }>("/novels?limit=100");
-    if (!Array.isArray(data.items)) throw new Error("Unexpected works response");
-    const works = data.items
-      .map((item) =>
-        normalizeSummary(item, fallbackFor(asText(item.id) || "") as NovelDetail)
-      )
-      .sort(
-        (a, b) =>
-          new Date(b.updatedAt || 0).getTime() -
-          new Date(a.updatedAt || 0).getTime()
-      );
-    const value: WorksPayload = {
-      works,
-      origin: "live",
-      syncedAt: new Date().toISOString(),
-    };
-    worksCache = { value, at: Date.now() };
-    return value;
-  } catch {
-    const value = snapshotWorksPayload();
-    worksCache = { value, at: Date.now() };
-    return value;
+    const data = await apiGet<{ items?: JsonRecord[] }>('/novels?limit=100');
+    if (!Array.isArray(data.items)) throw new Error('Unexpected works response');
+    const works = data.items.map(item => normalizeSummary(item)).sort((a, b) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime());
+    return { works, origin: 'live', syncedAt: new Date().toISOString() };
+  } catch (error) {
+    if (isDenied(error)) return { works: [], origin: 'live', syncedAt: '' };
+    return snapshotWorksPayload(await loadSnapshot());
   }
 }
 
-export async function loadNovel(
-  id: string,
-  force = false
-): Promise<NovelPayload | null> {
-  await loadSnapshot(force);
-  const cached = novelCache.get(id);
-  if (!force && cached && Date.now() - cached.at < CACHE_TTL) {
-    return cached.value;
-  }
-  const fallback = fallbackFor(id);
+export async function loadNovel(id: string, _force = false): Promise<NovelPayload | null> {
   try {
-    const detailRaw = await apiGet<JsonRecord>(`/novels/${encodeURIComponent(id)}`);
+    const detailRaw = await apiGet<JsonRecord>('/novels/' + encodeURIComponent(id));
     let chapterRaw: unknown = detailRaw.chapters;
-    try {
-      chapterRaw = await apiGet<JsonRecord[]>(
-        `/novels/${encodeURIComponent(id)}/chapters`
-      );
-    } catch {
-      // The detail payload usually carries the chapter list as a fallback.
-    }
-    const novel = normalizeDetail(
-      detailRaw,
-      chapterRaw,
-      fallback as NovelDetail | undefined
-    );
-    const value: NovelPayload = {
-      novel,
-      origin: "live",
-      syncedAt: new Date().toISOString(),
-    };
-    novelCache.set(id, { value, at: Date.now() });
-    return value;
-  } catch {
-    if (!fallback) return null;
-    return {
-      novel: fallback,
-      origin: "snapshot",
-      syncedAt: snapshot.generatedAt,
-    };
+    try { chapterRaw = await apiGet<JsonRecord[]>('/novels/' + encodeURIComponent(id) + '/chapters'); }
+    catch (error) { if (isDenied(error)) return null; }
+    return { novel: normalizeDetail(detailRaw, chapterRaw), origin: 'live', syncedAt: new Date().toISOString() };
+  } catch (error) {
+    if (isDenied(error)) return null;
+    const snapshot = await loadSnapshot();
+    const fallback = fallbackFor(id, snapshot);
+    return fallback ? { novel: fallback, origin: 'snapshot', syncedAt: snapshot.generatedAt } : null;
   }
 }
 

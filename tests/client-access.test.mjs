@@ -1,0 +1,44 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import path from 'node:path';
+import os from 'node:os';
+import { pathToFileURL } from 'node:url';
+import { build } from 'vite';
+
+test('browser data reads never reuse another account or bypass denial with old snapshots', async t => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'xuzhang-client-'));
+  const originalFetch = globalThis.fetch; const originalWindow = globalThis.window;
+  t.after(async () => { globalThis.fetch = originalFetch; globalThis.window = originalWindow; await rm(dir, { recursive: true, force: true }); });
+  globalThis.window = { setTimeout, clearTimeout };
+  const result = await build({ configFile: false, logLevel: 'silent', build: { write: false, minify: false, lib: { entry: path.resolve('src/api.ts'), formats: ['es'], fileName: 'api' } } });
+  const output = (Array.isArray(result) ? result[0] : result).output.find(item => item.type === 'chunk' && item.isEntry);
+  const file = path.join(dir, 'api.mjs'); await writeFile(file, output.code);
+  const api = await import(pathToFileURL(file).href);
+  let denied = false; let outage = false; let chapterDenied = false; const calls = [];
+  const response = (data, status = 200) => Response.json({ success: status < 400, data }, { status });
+  globalThis.fetch = async url => {
+    calls.push(String(url));
+    if (String(url) === '/api/snapshot') return response({ generatedAt: 'now', works: denied ? [] : [{ id: 'n1', title: 'OFFLINE-PRIVATE', chapters: [] }] });
+    if (String(url).includes('/chapters')) return chapterDenied ? response(null, 404) : response([]);
+    if (outage) return response(null, 502);
+    if (String(url).includes('/novels/n1')) return denied ? response(null, 404) : response({ id: 'n1', title: 'LIVE-PRIVATE', chapters: [] });
+    return response({ items: denied ? [] : [{ id: 'n1', title: 'LIVE-PRIVATE' }] });
+  };
+  assert.equal((await api.loadWorks()).works[0].title, 'LIVE-PRIVATE');
+  assert.equal((await api.loadNovel('n1')).novel.title, 'LIVE-PRIVATE');
+  denied = true;
+  assert.deepEqual((await api.loadWorks()).works, []);
+  const beforeDenied = calls.filter(url => url === '/api/snapshot').length;
+  assert.equal(await api.loadNovel('n1'), null);
+  assert.equal(calls.filter(url => url === '/api/snapshot').length, beforeDenied);
+  outage = true;
+  assert.equal(await api.loadNovel('n1'), null);
+  denied = false;
+  assert.equal((await api.loadNovel('n1')).novel.title, 'OFFLINE-PRIVATE');
+  denied = true;
+  assert.equal(await api.loadNovel('n1'), null);
+  assert.deepEqual((await api.loadWorks()).works, []);
+  outage = false; denied = false; chapterDenied = true;
+  assert.equal(await api.loadNovel('n1'), null);
+});

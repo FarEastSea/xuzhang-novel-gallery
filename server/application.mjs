@@ -3,6 +3,8 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { openStore, digest, publicUser, hashPassword, verifyPassword, validateUsername, validateSettings } from './store.mjs';
+import { createPublications } from './publications.mjs';
+import { createSource } from './source.mjs';
 import { projectReadingData, projectSnapshot } from './library.mjs';
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
 const SESSION = 'xuzhang_session';
@@ -16,6 +18,17 @@ async function readJson(req) {
 export function createApplication({ dataDir, trustProxy = false, fetchImpl = fetch }) {
   const store = openStore(dataDir);
   const { db } = store;
+  const publications = createPublications(store);
+  const source = createSource(store, dataDir, fetchImpl);
+  const studioAllowed = user => Boolean(user && (user.role === 'admin' || user.studio_access));
+  const currentReader = req => session(req);
+  function adminCatalog(catalog, key) {
+    const items = new Map(catalog.items.map(item => [item.id, item]));
+    for (const row of db.prepare('SELECT novel_id, title, genre FROM publications WHERE source_key=?').all(key)) if (!items.has(row.novel_id)) items.set(row.novel_id, { id: row.novel_id, title: row.title || row.novel_id, genre: row.genre, source: 'unavailable' });
+    return { ...catalog, sourceKey: key, items: [...items.values()].map(item => ({ ...item, ...publications.policy(item.id, key) })) };
+  }
+  function sameSource(key) { if (key !== publications.sourceKey()) fail(409, '作品来源已变更，请刷新重试'); }
+  function requireReadable(id, req, key = publications.sourceKey()) { sameSource(key); if (!publications.canRead(id, currentReader(req), key)) fail(404, '作品不存在或暂无阅读权限'); }
   const rates = new Map();
   const dummyPassword = hashPassword(randomBytes(24).toString('hex'));
   function throttle(key) {
@@ -54,21 +67,20 @@ export function createApplication({ dataDir, trustProxy = false, fetchImpl = fet
   const send = (res, data, status = 200) => { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify({ success: true, data })); };
   async function reading(req, res, url) {
     if (req.method !== 'GET') fail(405, '作品馆接口仅允许读取');
-    const allowed = /^\/api\/(?:health|novels(?:\/[A-Za-z0-9_-]+(?:\/chapters)?)?)$/;
-    if (!allowed.test(url.pathname)) fail(404, '接口不存在');
-    const settings = store.settings();
-    if (!settings.studioOrigin) fail(503, '尚未配置作品来源');
-    const target = new URL(url.pathname, settings.studioOrigin);
-    if (url.pathname === '/api/novels') target.searchParams.set('limit', '100');
-    let response;
-    try { response = await fetchImpl(target, { headers: { Accept: 'application/json' }, redirect: 'error', signal: AbortSignal.timeout(settings.timeoutSeconds * 1000) }); }
-    catch { fail(502, '作品来源暂不可用'); }
-    if (!response.ok) fail(response.status === 404 ? 404 : 502, response.status === 404 ? '作品不存在' : '作品来源暂不可用');
-    let payload;
-    try { payload = await response.json(); } catch { fail(502, '作品来源返回格式错误'); }
-    if (payload.success === false) fail(502, '作品来源暂不可用');
-    if (url.pathname === '/api/health') { send(res, { status: payload.data?.status === 'ok' ? 'ok' : 'unavailable' }); return; }
-    send(res, projectReadingData(payload.data, url.pathname));
+    if (!/^\/api\/(?:health|novels(?:\/[A-Za-z0-9_-]+(?:\/chapters)?)?)$/.test(url.pathname)) fail(404, '接口不存在');
+    const key = publications.sourceKey();
+    const id = url.pathname.split('/')[3];
+    if (id) requireReadable(id, req, key);
+    let data;
+    try { data = url.pathname === '/api/novels' ? await source.list() : await source.get(url.pathname); }
+    catch (error) { sameSource(key); if (id) requireReadable(id, req, key); throw error; }
+    sameSource(key);
+    if (url.pathname === '/api/health') { send(res, { status: data?.status === 'ok' ? 'ok' : 'unavailable' }); return; }
+    if (id) requireReadable(id, req, key);
+    if (id && !url.pathname.endsWith('/chapters') && data?.id !== id) fail(502, '作品来源返回了不匹配的作品');
+    const projected = projectReadingData(data, url.pathname);
+    if (!id) projected.items = projected.items.filter(item => publications.canRead(item.id, currentReader(req), key));
+    send(res, projected);
   }
   async function handle(req, res, url) {
     if (url.pathname === '/healthz') { send(res, { status: 'ok', version: versionInfo.version, studioVersion: versionInfo.studioVersion, initialized: store.initialized() }); return true; }
@@ -78,7 +90,7 @@ export function createApplication({ dataDir, trustProxy = false, fetchImpl = fet
       const method = req.method;
       if (!['GET', 'HEAD'].includes(method)) writeGuard(req);
       if (url.pathname === '/api/session' && method === 'GET') {
-        send(res, { user: publicUser(user), needsSetup: !store.initialized(), studioEnabled: Boolean(user && store.settings().studioPublicUrl) });
+        send(res, { user: publicUser(user), needsSetup: !store.initialized(), studioEnabled: Boolean(studioAllowed(user) && store.settings().studioPublicUrl), accessKey: digest(JSON.stringify([user?.id || null, user?.role || null, store.accessRevision()])) });
       } else if (url.pathname === '/api/setup' && method === 'POST') {
         if (store.initialized()) fail(409, '系统已初始化');
         throttle('setup');
@@ -90,7 +102,7 @@ export function createApplication({ dataDir, trustProxy = false, fetchImpl = fet
         const id = randomUUID();
         store.transaction(() => {
           if (store.initialized()) fail(409, '系统已初始化');
-          db.prepare('INSERT INTO users VALUES (?, ?, ?, ?, 1, ?)').run(id, username, password, 'admin', new Date().toISOString());
+          db.prepare('INSERT INTO users (id, username, password, role, enabled, created_at) VALUES (?, ?, ?, ?, 1, ?)').run(id, username, password, 'admin', new Date().toISOString());
           db.prepare("DELETE FROM meta WHERE key='setupHash'").run();
         });
         store.completeSetup();
@@ -119,10 +131,24 @@ export function createApplication({ dataDir, trustProxy = false, fetchImpl = fet
         send(res, null);
       } else if (url.pathname.startsWith('/api/admin/')) {
         admin(user);
-        if (url.pathname === '/api/admin/settings' && method === 'GET') send(res, store.settings());
+        if (url.pathname === '/api/admin/catalog' && method === 'GET') {
+          const key = publications.sourceKey();
+          const catalog = await source.catalog();
+          recheck(req, 'admin'); sameSource(key);
+          send(res, adminCatalog(catalog, key));
+        } else if (/^\/api\/admin\/publications\/[A-Za-z0-9_-]+$/.test(url.pathname) && method === 'PUT') {
+          const id = url.pathname.split('/').at(-1); const key = publications.sourceKey();
+          const body = await readJson(req);
+          const catalog = await source.catalog();
+          recheck(req, 'admin'); sameSource(key);
+          const item = adminCatalog(catalog, key).items.find(item => item.id === id);
+          if (!item) fail(404, '作品来源中未找到此作品，请刷新列表');
+          const policy = store.transaction(() => publications.save(id, body, key, item));
+          send(res, policy);
+        } else if (url.pathname === '/api/admin/settings' && method === 'GET') send(res, store.settings());
         else if (url.pathname === '/api/admin/settings' && method === 'PUT') {
           const value = validateSettings(await readJson(req));
-          store.transaction(() => { recheck(req, 'admin'); db.prepare('UPDATE settings SET value=? WHERE id=1').run(JSON.stringify(value)); db.prepare('UPDATE sessions SET expires=MIN(expires, ?)').run(Date.now() + value.sessionHours * 3600_000); });
+          store.transaction(() => { recheck(req, 'admin'); db.prepare('UPDATE settings SET value=? WHERE id=1').run(JSON.stringify(value)); store.touchAccess(); db.prepare('UPDATE sessions SET expires=MIN(expires, ?)').run(Date.now() + value.sessionHours * 3600_000); });
           send(res, value);
         } else if (url.pathname === '/api/admin/connection' && method === 'POST') {
           const settings = store.settings(); if (!settings.studioOrigin) fail(400, '请先保存作品来源地址');
@@ -135,7 +161,13 @@ export function createApplication({ dataDir, trustProxy = false, fetchImpl = fet
           if (!['admin', 'member'].includes(body.role)) fail(400, '角色无效');
           const password = await hashPassword(body.password);
           if (db.prepare('SELECT 1 FROM users WHERE username=?').get(username)) fail(409, '用户名已存在');
-          const id = randomUUID(); recheck(req, 'admin'); db.prepare('INSERT INTO users VALUES (?, ?, ?, ?, 1, ?)').run(id, username, password, body.role, new Date().toISOString());
+          if (body.studioAccess !== undefined && typeof body.studioAccess !== 'boolean') fail(400, '创作台权限格式错误');
+          const id = randomUUID();
+          store.transaction(() => {
+            recheck(req, 'admin');
+            db.prepare('INSERT INTO users (id, username, password, role, enabled, created_at) VALUES (?, ?, ?, ?, 1, ?)').run(id, username, password, body.role, new Date().toISOString());
+            db.prepare('UPDATE users SET studio_access=? WHERE id=?').run(Number(body.studioAccess === true), id);
+          });
           send(res, publicUser(db.prepare('SELECT * FROM users WHERE id=?').get(id)), 201);
         } else if (/^\/api\/admin\/users\/[a-f0-9-]+$/.test(url.pathname) && ['PATCH', 'DELETE'].includes(method)) {
           const id = url.pathname.split('/').at(-1); const target = db.prepare('SELECT * FROM users WHERE id=?').get(id);
@@ -143,6 +175,7 @@ export function createApplication({ dataDir, trustProxy = false, fetchImpl = fet
           if (target.id === user.id) fail(400, '请使用账户设置修改自己的密码，不能停用或删除当前账户');
           const body = method === 'DELETE' ? {} : await readJson(req);
           if (method === 'PATCH' && (!['admin', 'member'].includes(body.role) || typeof body.enabled !== 'boolean')) fail(400, '角色或账户状态无效');
+          if (body.studioAccess !== undefined && typeof body.studioAccess !== 'boolean') fail(400, '创作台权限格式错误');
           const password = body.password ? await hashPassword(body.password) : null;
           store.transaction(() => {
             recheck(req, 'admin');
@@ -150,15 +183,17 @@ export function createApplication({ dataDir, trustProxy = false, fetchImpl = fet
             if (!current) fail(404, '用户不存在');
             if (current.role === 'admin' && current.enabled && (method === 'DELETE' || body.role !== 'admin' || !body.enabled) && db.prepare("SELECT COUNT(*) AS n FROM users WHERE role='admin' AND enabled=1").get().n <= 1) fail(400, '至少保留一个启用的管理员');
             if (method === 'DELETE') db.prepare('DELETE FROM users WHERE id=?').run(id);
-            else { db.prepare('UPDATE users SET role=?, enabled=?, password=? WHERE id=?').run(body.role, Number(body.enabled), password || current.password, id); db.prepare('DELETE FROM sessions WHERE user_id=?').run(id); }
+            else { db.prepare('UPDATE users SET role=?, enabled=?, password=? WHERE id=?').run(body.role, Number(body.enabled), password || current.password, id); db.prepare('UPDATE users SET studio_access=? WHERE id=?').run(Number(body.studioAccess ?? Boolean(current.studio_access)), id); db.prepare('DELETE FROM sessions WHERE user_id=?').run(id); }
+            store.touchAccess();
           }); send(res, null);
         } else fail(404, '接口不存在');
       } else if (url.pathname === '/api/studio' && method === 'GET') {
-        member(user); const target = store.settings().studioPublicUrl; if (!target) fail(404, '创作台入口尚未配置');
+        member(user); if (!studioAllowed(user)) fail(403, '当前账户没有创作台权限'); const target = store.settings().studioPublicUrl; if (!target) fail(404, '创作台入口尚未配置');
         // The redirect itself is authenticated. Never disclose the destination to guests.
         let route = url.searchParams.get('path') || '';
         const novelId = url.searchParams.get('novel');
         if (novelId) {
+          requireReadable(novelId, req);
           if (!/^[A-Za-z0-9_-]+$/.test(novelId)) fail(400, '作品标识无效');
           const settings = store.settings();
           let workspace;
@@ -175,11 +210,10 @@ export function createApplication({ dataDir, trustProxy = false, fetchImpl = fet
         const destination = route ? target + route : target;
         res.writeHead(302, { Location: destination, 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' }); res.end();
       } else if (url.pathname === '/api/snapshot' && method === 'GET') {
-        let value = { generatedAt: '', source: 'snapshot', works: [] };
-        if (store.settings().snapshotEnabled) {
-          try { value = projectSnapshot(JSON.parse(await readFile(path.join(dataDir, 'snapshot.json'), 'utf8'))); }
-          catch (error) { if (error.code !== 'ENOENT') fail(503, '离线快照不可用'); }
-        }
+        const key = publications.sourceKey();
+        const value = projectSnapshot(await source.snapshot());
+        sameSource(key);
+        value.works = store.settings().snapshotEnabled ? value.works.filter(item => publications.canRead(item.id, currentReader(req), key)) : [];
         send(res, value);
       } else await reading(req, res, url);
     } catch (error) {

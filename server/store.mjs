@@ -5,7 +5,7 @@ import { promisify } from 'node:util';
 import path from 'node:path';
 const scrypt = promisify(scryptCallback);
 export const digest = (value) => createHash('sha256').update(value).digest('hex');
-export const publicUser = (user) => user ? { id: user.id, username: user.username, role: user.role, enabled: Boolean(user.enabled), createdAt: user.created_at } : null;
+export const publicUser = (user) => user ? { id: user.id, username: user.username, role: user.role, enabled: Boolean(user.enabled), studioAccess: user.role === 'admin' || Boolean(user.studio_access), createdAt: user.created_at } : null;
 export const defaults = Object.freeze({ studioOrigin: '', studioPublicUrl: '', snapshotEnabled: true, sessionHours: 24, timeoutSeconds: 10 });
 export async function hashPassword(password) {
   if (typeof password !== 'string' || password.length < 12 || password.length > 128) throw Object.assign(new Error('密码须为 12–128 个字符'), { status: 400 });
@@ -44,7 +44,11 @@ export function openStore(dataDir) {
     CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, password TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN ('admin','member')), enabled INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS sessions (hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, expires INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS settings (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);`);
+    CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS publications (source_key TEXT NOT NULL, novel_id TEXT NOT NULL, published INTEGER NOT NULL CHECK(published IN (0,1)), visibility TEXT NOT NULL CHECK(visibility IN ('public','members','selected','admins')), revision INTEGER NOT NULL, updated_at TEXT NOT NULL, title TEXT NOT NULL DEFAULT '', genre TEXT NOT NULL DEFAULT '', PRIMARY KEY(source_key, novel_id));
+    CREATE TABLE IF NOT EXISTS publication_users (source_key TEXT NOT NULL, novel_id TEXT NOT NULL, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, PRIMARY KEY(source_key, novel_id, user_id), FOREIGN KEY(source_key, novel_id) REFERENCES publications(source_key, novel_id) ON DELETE CASCADE);`);
+  if (!db.prepare('PRAGMA table_info(users)').all().some(column => column.name === 'studio_access')) db.exec('ALTER TABLE users ADD COLUMN studio_access INTEGER NOT NULL DEFAULT 0');
+  db.prepare("INSERT OR IGNORE INTO meta VALUES ('accessRevision', '0')").run();
   db.prepare('INSERT OR IGNORE INTO settings VALUES (1, ?)').run(JSON.stringify(defaults));
   const tokenPath = path.join(dataDir, 'setup-token');
   const initialized = () => Boolean(db.prepare('SELECT 1 FROM users LIMIT 1').get());
@@ -55,6 +59,8 @@ export function openStore(dataDir) {
   } else { rmSync(tokenPath, { force: true }); }
   return {
     db, initialized, tokenPath,
+    touchAccess() { db.prepare("UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='accessRevision'").run(); },
+    accessRevision: () => db.prepare("SELECT value FROM meta WHERE key='accessRevision'").get().value,
     settings: () => JSON.parse(db.prepare('SELECT value FROM settings WHERE id=1').get().value),
     transaction(fn) { db.exec('BEGIN IMMEDIATE'); try { const value = fn(); db.exec('COMMIT'); return value; } catch (error) { db.exec('ROLLBACK'); throw error; } },
     completeSetup() { db.prepare("DELETE FROM meta WHERE key='setupHash'").run(); rmSync(tokenPath, { force: true }); },

@@ -1,88 +1,44 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useSession } from "./session";
 import { checkStudio, loadNovel, loadWorks } from "./api";
-import { snapshot } from "./data";
 import type { NovelDetail, NovelPayload, WorksPayload } from "./types";
 
 export function useWorks() {
+  const { accessKey } = useSession();
   const [state, setState] = useState<WorksPayload & { loading: boolean }>(() => ({
-    works: snapshot.works,
+    works: [],
     origin: "snapshot",
-    syncedAt: snapshot.generatedAt,
+    syncedAt: "",
     loading: true,
   }));
 
+  const requestId = useRef(0);
   const refresh = useCallback(async (force = true) => {
-    setState((current) => ({ ...current, loading: true }));
+    const current = ++requestId.current;
+    setState({ works: [], origin: 'live', syncedAt: '', loading: true });
     const payload = await loadWorks(force);
-    setState({ ...payload, loading: false });
+    if (current === requestId.current) setState({ ...payload, loading: false });
   }, []);
-
   useEffect(() => {
-    let active = true;
-    loadWorks().then((payload) => {
-      if (active) setState({ ...payload, loading: false });
-    });
-    return () => {
-      active = false;
-    };
-  }, []);
+    void refresh(false);
+    return () => { requestId.current++; };
+  }, [accessKey, refresh]);
 
   return { ...state, refresh };
 }
 
 export function useNovel(id: string | undefined) {
-  const fallback = id
-    ? snapshot.works.find((work) => work.id === id) || null
-    : null;
-  const [state, setState] = useState<
-    (NovelPayload & { loading: boolean; notFound: boolean }) | null
-  >(() =>
-    fallback
-      ? {
-          novel: fallback,
-          origin: "snapshot",
-          syncedAt: snapshot.generatedAt,
-          loading: true,
-          notFound: false,
-        }
-      : null
-  );
-
+  const { accessKey } = useSession();
+  const [state, setState] = useState<(NovelPayload & { loading: boolean; notFound: boolean }) | null>(null);
   useEffect(() => {
     if (!id) return;
     let active = true;
-    setState((current) =>
-      current && current.novel.id === id
-        ? { ...current, loading: true, notFound: false }
-        : fallback
-          ? {
-              novel: fallback,
-              origin: "snapshot",
-              syncedAt: snapshot.generatedAt,
-              loading: true,
-              notFound: false,
-            }
-          : null
-    );
-    loadNovel(id).then((payload) => {
-      if (!active) return;
-      setState(
-        payload
-          ? { ...payload, loading: false, notFound: false }
-          : {
-              novel: null as unknown as NovelDetail,
-              origin: "snapshot",
-              syncedAt: snapshot.generatedAt,
-              loading: false,
-              notFound: true,
-            }
-      );
+    setState(null);
+    loadNovel(id).then(payload => {
+      if (active) setState(payload ? { ...payload, loading: false, notFound: false } : { novel: null as unknown as NovelDetail, origin: 'live', syncedAt: '', loading: false, notFound: true });
     });
-    return () => {
-      active = false;
-    };
-  }, [id, fallback]);
-
+    return () => { active = false; };
+  }, [id, accessKey]);
   return state;
 }
 
