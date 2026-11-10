@@ -42,7 +42,8 @@ else {
     const location = upload.headers.get('location');
     if (!location) throw new Error('Registry did not return an upload location');
     const target = new URL(location, base);
-    if (target.origin !== base || !target.pathname.startsWith(`/v2/${image}/blobs/uploads/`)) throw new Error('Refusing unexpected upload cancellation URL');
+    const uploadPath = `/v2/${image}/blobs/uploads`;
+    if (target.origin !== base || (target.pathname !== uploadPath && !target.pathname.startsWith(uploadPath + '/'))) throw new Error('Refusing unexpected upload cancellation URL');
     const cancelled = await request(target.href, 'DELETE');
     console.log(JSON.stringify({ step: 'cancel-empty-upload', status: cancelled.status }));
     if (!cancelled.ok) process.exitCode = 1;
