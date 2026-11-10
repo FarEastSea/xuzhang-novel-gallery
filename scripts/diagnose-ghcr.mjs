@@ -17,8 +17,8 @@ else {
   const token = payload.token || payload.access_token;
   if (!token) throw new Error('Registry did not issue a token');
   const registryHeaders = { Authorization: 'Bearer ' + token, Accept: 'application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json' };
-  async function request(route, method = 'GET') {
-    return fetch(new URL(route, base), { method, headers: registryHeaders, redirect: 'error', signal: AbortSignal.timeout(30_000) });
+  async function request(route, method = 'GET', body) {
+    return fetch(new URL(route, base), { method, headers: { ...registryHeaders, ...(body !== undefined ? { 'Content-Type': 'application/octet-stream' } : {}) }, ...(body !== undefined ? { body } : {}), redirect: 'error', signal: AbortSignal.timeout(30_000) });
   }
   async function errors(response) {
     try { return (await response.json()).errors?.map(value => ({ code: value.code, message: String(value.message).slice(0, 180) })); } catch { return []; }
@@ -44,9 +44,12 @@ else {
     const target = new URL(location, base);
     // Registry upload locations are opaque; GHCR need not use the initiating path shape.
     if (target.origin !== base) throw new Error('Refusing upload host: ' + target.origin);
-    const cancelled = await request(target.href, 'DELETE');
-    console.log(JSON.stringify({ step: 'cancel-empty-upload', status: cancelled.status }));
-    if (!cancelled.ok) process.exitCode = 1;
+    // GHCR's returned endpoint does not implement DELETE. Complete the empty blob instead;
+    // no manifest or image tag is created, and no user data is uploaded.
+    target.searchParams.set('digest', 'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855');
+    const completed = await request(target.href, 'PUT', Buffer.alloc(0));
+    console.log(JSON.stringify({ step: 'finish-empty-blob', status: completed.status, errors: completed.ok ? [] : await errors(completed) }));
+    if (!completed.ok) process.exitCode = 1;
   } else process.exitCode = 1;
   if (previous.status !== 200) process.exitCode = 1;
 }
