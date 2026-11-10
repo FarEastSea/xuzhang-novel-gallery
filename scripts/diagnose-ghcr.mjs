@@ -42,8 +42,8 @@ else {
     const location = upload.headers.get('location');
     if (!location) throw new Error('Registry did not return an upload location');
     const target = new URL(location, base);
-    const uploadPath = `/v2/${image}/blobs/uploads`;
-    if (target.origin !== base || (target.pathname !== uploadPath && !target.pathname.startsWith(uploadPath + '/'))) throw new Error('Refusing unexpected upload cancellation URL');
+    // Registry upload locations are opaque; GHCR need not use the initiating path shape.
+    if (target.origin !== base) throw new Error('Refusing upload host: ' + target.origin);
     const cancelled = await request(target.href, 'DELETE');
     console.log(JSON.stringify({ step: 'cancel-empty-upload', status: cancelled.status }));
     if (!cancelled.ok) process.exitCode = 1;
