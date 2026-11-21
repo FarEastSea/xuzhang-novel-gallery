@@ -4,8 +4,8 @@
 
 ```sh
 # 对齐创作台版本，清零独立更新编号
-npm run version:set -- 0.8.8
-# 创作台未变时，依次生成 0.8.8.1、0.8.8.2 等
+npm run version:set -- 0.8.11
+# 创作台未变时，依次生成 0.8.11.1、0.8.11.2 等
 npm run version:next
 ```
 

@@ -9,8 +9,8 @@ import { parseVersion } from '../version.mjs';
 test('release versions preserve three-part alignment and four-part independent revisions', () => {
   assert.deepEqual(parseVersion('0.7.1'), { version: '0.7.1', studioVersion: '0.7.1', revision: 0, packageVersion: '0.7.1' });
   assert.deepEqual(parseVersion('0.7.1.12'), { version: '0.7.1.12', studioVersion: '0.7.1', revision: 12, packageVersion: '0.7.1+revision.12' });
-  assert.deepEqual(parseVersion('0.8.8'), { version: '0.8.8', studioVersion: '0.8.8', revision: 0, packageVersion: '0.8.8' });
-  assert.deepEqual(parseVersion('0.8.8.1'), { version: '0.8.8.1', studioVersion: '0.8.8', revision: 1, packageVersion: '0.8.8+revision.1' });
+  assert.deepEqual(parseVersion('0.8.11'), { version: '0.8.11', studioVersion: '0.8.11', revision: 0, packageVersion: '0.8.11' });
+  assert.deepEqual(parseVersion('0.8.11.1'), { version: '0.8.11.1', studioVersion: '0.8.11', revision: 1, packageVersion: '0.8.11+revision.1' });
   for (const value of ['', 'v0.7.1', '0.7', '0.7.01', '0.7.1.0', '0.7.1.1.1', '0.7.1-beta', '0.7.1.9007199254740992']) assert.throws(() => parseVersion(value));
 });
 
@@ -35,7 +35,7 @@ test('version commands update all metadata, increment revisions and reject misma
   assert.equal(run(['ci'], { GITHUB_REF: 'refs/tags/v0.7.1.2', GITHUB_OUTPUT: output }).status, 0);
   assert.equal((await readFile(output, 'utf8')).trim(), 'version=0.7.1.2');
   assert.notEqual(run(['ci'], { GITHUB_REF: 'refs/tags/v0.7.1', GITHUB_OUTPUT: output }).status, 0);
-  assert.equal(run(['set', '0.8.8']).status, 0);
-  assert.equal(run(['check']).stdout.trim(), '0.8.8');
-  assert.equal(JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8')).version, '0.8.8');
+  assert.equal(run(['set', '0.8.11']).status, 0);
+  assert.equal(run(['check']).stdout.trim(), '0.8.11');
+  assert.equal(JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8')).version, '0.8.11');
 });
