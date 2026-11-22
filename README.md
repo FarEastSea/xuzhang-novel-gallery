@@ -45,4 +45,8 @@ npm run check:release
 
 生产交付采用 Docker Compose，提供 AMD64 和 ARM64 镜像。GitHub Actions 检查代码、构建和容器启动，并按版本标签发布镜像。
 
-[仓库](https://github.com/FarEastSea/xuzhang-novel-gallery) · [版本记录](CHANGELOG.md) · [发布维护规则](docs/RELEASING.md)
+## 开源许可与社区
+
+本项目基于 [MIT 许可证](LICENSE) 开源。参与协作请查阅 [贡献指南](CONTRIBUTING.md)、[行为准则](CODE_OF_CONDUCT.md) 与 [安全策略](SECURITY.md)。
+
+[仓库](https://github.com/FarEastSea/xuzhang-novel-gallery) · [版本记录](CHANGELOG.md) · [发布维护规则](docs/RELEASING.md) · [贡献指南](CONTRIBUTING.md) · [开源许可](LICENSE)
